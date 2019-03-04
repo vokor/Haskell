@@ -6,65 +6,38 @@ import Data.Char
 import Data.Functor.Identity
 import Text.Read
 
+
+data Commands =
+    None
+  | Type String
+  | Create String String
+  | Insert1 String String String
+  | Insert2 String String
+  | Update1 String String [String]
+  | Update2 String String
+  | Remove1 String [String]
+  | Remove2 String
+  | Select [String]
+  | Load [String]
+  | Upload String
+
+
 parser:: String -> [Either String Int]
 parser input = if not (checkInput input) then [] else
   case parse parser' "" input of
     Left err  -> []
-    Right xs  -> case typeCommand xs of
-                  0 -> if (length xs == 4 && (xs !! 1) == "TABLE" && checkName (xs !! 2) == True)
-                         then (parseCreate ((xs !! 2),(xs !! 3)))
-                         else []
-                  1 -> if (length xs == 6 && (xs !! 1) == "INTO" && checkName (xs !! 2) == True && (xs !! 4) == "VALUES")
-                    then
-                      parseInsert((xs !! 2), (xs !! 3), (xs !! 5))
-                    else
-                      if (length xs == 5 && (xs !! 1) == "INTO" && checkName (xs !! 2) == True && (xs !! 3) == "VALUES")
-                        then
-                          parseInsert((xs !! 2), "undefined", (xs !! 4))
-                        else []
-                  2 -> if (length xs == 8 && (xs !! 2) == "SET" && (xs !! 3) /= "" && (xs !! 4) == "WHERE" && (xs !! 5) /= "")
-                    then
-                      parseUpdate(xs !! 1, xs !! 3, xs !! 5, xs !! 6, xs !! 7)
-                    else
-                      if (length xs == 4 && (xs !! 2) == "SET" && (xs !! 3) /= "")
-                        then
-                          parseUpdate(xs !! 1, xs !! 3, "undefined", "undefined", "undefined")
-                        else
-                          []
-                  3 -> if (length xs == 7 && (xs !! 1) == "FROM" && (xs !! 3) == "WHERE")
-                    then
-                      parseRemove(xs !! 2, xs !! 4, xs !! 5, xs !! 6)
-                    else
-                      if (length xs == 3 && (xs !! 1) == "FROM")
-                        then
-                          parseRemove(xs !! 2, "undefined", "undefined", "undefined")
-                        else
-                          []
-                  4 -> if (length xs == 4 && (xs !! 2) == "FROM") then
-                     if ((xs !! 1) == "*") then
-                       parseSelect [(xs !! 3)]
-                     else
-                       parseSelect[(xs !! 3), (xs !! 1)]
-                   else
-                     if any (== "JOIN") xs then
-                       parseSelect("1":(tail xs))
-                     else
-                       parseSelect("0":(tail xs))
-                  5 -> if (length xs == 5 && (xs !! 2) == "IN" && (xs !! 3) == "FILE")
-                    then
-                       if ((xs !! 1) == "*") then
-                          parseLoad("0":(tail xs))
-                       else
-                          parseLoad("1":(tail xs))
-                     else
-                       []
-                  6 -> if (length xs == 3 && (xs !! 1) == "FILE")
-                    then
-                      parseUpload (xs !! 2)
-                    else
-                      []
-                  _ -> []
-
+    Right xs -> case typeCommand xs of
+      Create a b              -> parseCreate (a, b)
+      Insert1 a b c           -> parseInsert (a, b, c)
+      Insert2 a b             -> parseInsert (a, "undefined", b)
+      Update1 a b (u:v:w:[])  -> parseUpdate (a, b, u, v, w)
+      Update2 a b             -> parseUpdate (a, b, "undefined", "undefined", "undefined")
+      Remove1 a (u:v:w:[])    -> parseRemove (a, u, v, w)
+      Remove2 a               -> parseRemove (a, "undefined", "undefined", "undefined")
+      Load a                  -> parseLoad a
+      Upload a                -> parseUpload a
+      Select a                -> parseSelect a
+      None       -> []
 
 parseUpload:: String -> [Either String Int] -- TODO :: ловить исключения с помощью catch
 parseUpload str = [Right 6, Left (f str)]
@@ -93,16 +66,15 @@ parseSelect tokens = let
      1 -> [Right 4, Left $ head tokens, Right 0]   -- [Right 4,Left "table_name", Right 0]
      2 -> if (length (parseCommas (last tokens)) == 0) then [] else [Right 4, Left $ head tokens, Right 0] ++ fmap (Left . p2) (parseCommas (last tokens))  -- [Right 4,Left "table_name",Right 0,Left "DEPT",Left "NAME",Left "JOB"]
      _ -> case head tokens of
-       "0" -> if (length tokens == 8 && (tokens !! 2) == "FROM" && (tokens !! 4) == "WHERE" && length (parseCommas (tokens !! 1)) /= 0) then
-          if (checkPredicate (tokens !! 6))
+       "0" -> if (length (parseCommas (tokens !! 1)) /= 0) then
+          if (checkPredicate (tokens !! 4))
             then -- [Right 4,Left "table_name",Right 1,Left "Age",Left ">",Right 18,Left "FirstName",Left "LastName"]
-              [Right 4, Left $ (tokens !! 3), Right 1, Left (tokens !! 5), Left (tokens !! 6), identifyData (tokens !! 7)] ++ fmap (Left . p2) (parseCommas (tokens !! 1))  -- имя таблицы, столбцы, предикат
+              [Right 4, Left $ (tokens !! 2), Right 1, Left (tokens !! 3), Left (tokens !! 4), identifyData (tokens !! 5)] ++ fmap (Left . p2) (parseCommas (tokens !! 1))  -- имя таблицы, столбцы, предикат
             else
                [Left "Error> Predicate not recognized"]
           else
             []
-       "1" -> if (length tokens == 10 && (tokens !! 2) == "FROM" && (tokens !! 4) == "JOIN") then
-            let
+       "1" ->let -- Select ("1":(head xs):(xs !! 2):(xs !! 4):(drop 6 xs))
               -- список имен колонок для вывода. Список пуст, если t = 0, если нет, то его длина = t
               (t, listColumns) = if (tokens !! 1 == "*") then (0, []) else
                 let
@@ -113,11 +85,11 @@ parseSelect tokens = let
               -- дерево хранится в виде: предикат из трех элементов, Right k - длина левого поддерева,
               --                        список из k элементов - левое поддерево, конец списка - правое поддерево
               (listNames, tree) = let
-                  (a1,b1) = doWork (tokens !! 3)
-                  (a2,b2) = doWork (tokens !! 5)
-                  predicate = if (checkPredicate (tokens !! 8))
-                     then Left <$> (drop 7 tokens)
-                     else [Left (">Error: Predicate \"" ++ (tokens !! 8) ++ "\" not recognized")]
+                  (a1,b1) = doWork (tokens !! 2)
+                  (a2,b2) = doWork (tokens !! 3)
+                  predicate = if (checkPredicate (tokens !! 5))
+                     then Left <$> (drop 4 tokens)
+                     else [Left (">Error: Predicate \"" ++ (tokens !! 5) ++ "\" not recognized")]
 
                   in (a1 ++ a2, predicate ++ [Right (length b1)] ++ b1 ++ b2)
 
@@ -144,8 +116,6 @@ parseSelect tokens = let
               -- номер команды, список имен таблиц, Right 2, Right (n, 0) - выводить все или нет,
               -- если 0 - то выводить все и дальше идет дерево в виде списка
               -- если n - то идут n столбцов для вывода и дальше дерево в виде списка
-          else
-            []
   in res
 
 
@@ -287,6 +257,7 @@ checkName:: String -> Bool
 checkName [] = False
 checkName (x:xs) = (isLetter x || isDigit x || (x == '_')) && (if (length xs > 0) then checkName xs else True)
 
+{-
 --тип команды
 typeCommand:: [String] -> Int
 typeCommand [] = -1
@@ -299,6 +270,93 @@ typeCommand (x:xs) = case x of
   "LOAD"   -> 5
   "UPLOAD" -> 6
   _        -> -1
+-}
+
+
+listCreate    = ["TABLE", "", ""]
+listInsert'   = ["INTO", "", "", "VALUES", ""]
+listInsert''  = ["INTO", "", "VALUES", ""]
+listUpdate'   = ["", "SET", "", "WHERE", "", "", ""]
+listUpdate''  = ["", "SET", ""]
+listRemove'   = ["FROM", "", "WHERE", "", "", ""]
+listRemove''  = ["FROM", ""]
+listLoad      = ["", "IN", "FILE", ""]
+listUpload    = ["FILE", ""]
+listSelect'   = ["", "FROM", ""]
+listSelect''  = ["", "FROM", "", "WHERE", "", "", ""]
+listSelect''' = ["", "FROM", "", "JOIN", "", "ON", "", "", ""]
+
+identifyCommand::[String] -> [String] -> Bool
+identifyCommand a b = length b == length a && and f
+   where
+     f = zipWith (\x y -> if (x == "") then True else x == y) a b
+
+--тип команды
+typeCommand:: [String] -> Commands
+typeCommand [] = None
+typeCommand (x:xs) = case x of
+  "CREATE"  -> if (identifyCommand listCreate xs && checkName (xs !! 1)) then
+       Create (xs !! 1) (xs !! 2)
+    else
+       None
+  "INSERT"  -> if (identifyCommand listInsert' xs) then
+       Insert1 (xs !! 1) (xs !! 2) (xs !! 4)
+    else
+       if (identifyCommand listInsert'' xs) then
+           Insert2 (xs !! 1) (xs !! 3)
+       else
+           None
+  "UPDATE"  -> if (identifyCommand listUpdate' xs) then
+       Update1 (xs !! 0) (xs !! 2) (drop 4 xs)
+    else
+       if (identifyCommand listUpdate'' xs) then
+         Update2 (xs !! 0) (xs !! 2)
+       else
+         None
+  "REMOVE"  -> if (identifyCommand listRemove' xs) then
+       Remove1 (xs !! 1) (drop 3 xs)
+    else
+       if (identifyCommand listRemove'' xs) then
+          Remove2 (xs !! 1)
+       else
+          None
+  "LOAD"    -> if (identifyCommand listLoad xs) then
+        Load ((if head xs == "*" then "0" else "1"):xs)
+      else
+        None
+  "UPLOAD" -> if (identifyCommand listUpload xs) then
+        Upload (last xs)
+    else
+        None
+  "SELECT" -> if (identifyCommand listSelect' xs) then
+      if (head xs == "*") then Select [(xs !! 2)] else Select [(xs !! 2), head xs]
+    else
+      if (identifyCommand listSelect'' xs) then
+        Select ("0":(head xs):(xs !! 2):(drop 4 xs))
+      else
+        if (identifyCommand listSelect''' xs) then
+           Select ("1":(head xs):(xs !! 2):(xs !! 4):(drop 6 xs))
+        else
+           None
+
+  _         -> None
+
+
+
+        {-
+                    4 -> if (length xs == 4 && (xs !! 2) == "FROM") then
+                       if ((xs !! 1) == "*") then
+                         parseSelect [(xs !! 3)]
+                       else
+                         parseSelect[(xs !! 3), (xs !! 1)]
+                     else
+                       if any (== "JOIN") xs then
+                         parseSelect("1":(tail xs))
+                       else
+                         parseSelect("0":(tail xs))
+                    _ -> []
+  -}
+
 
 --парсер в строку по пробелам
 parser' :: Parsec String u [String]
