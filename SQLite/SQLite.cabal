@@ -27,8 +27,9 @@ source-repository head
 
 library
   exposed-modules:
-      Commands
-      Errors
+      Executor
+      ParserAST
+      TableAST
       Parser
       SQLite
   other-modules:
@@ -38,6 +39,7 @@ library
   build-depends:
       base >=4.7 && <5
     , parsec
+    , mtl
   default-language: Haskell2010
 
 executable SQLite-exe
@@ -51,6 +53,7 @@ executable SQLite-exe
       SQLite
     , base >=4.7 && <5
     , parsec
+    , mtl
   default-language: Haskell2010
 
 test-suite SQLite-test
@@ -68,4 +71,5 @@ test-suite SQLite-test
     , parsec
     , tasty
     , tasty-hunit
+    , mtl
   default-language: Haskell2010
